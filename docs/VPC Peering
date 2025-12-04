@@ -1,0 +1,113 @@
+# Tutorial: Configurando um VPC Peering na AWS para Conectar Zabbix e Banco de Dados
+
+Este guia detalha o processo de criação de uma conexão VPC Peering na AWS. O objetivo é permitir que uma instância EC2 (executando um servidor Zabbix) em uma VPC se comunique de forma segura com um banco de dados (MySQL/PostgreSQL) em outra VPC, utilizando exclusivamente endereços de IP privados.
+
+---
+
+### **Cenário de Exemplo**
+
+Para este tutorial, utilizaremos a seguinte arquitetura:
+
+* **VPC-A (Rede do Zabbix):**
+    * **Nome:** `vpc-zabbix`
+    * **Bloco CIDR:** `10.10.0.0/16`
+    * **Recurso:** Instância EC2 com o servidor Zabbix.
+
+* **VPC-B (Rede do Banco de Dados):**
+    * **Nome:** `vpc-database`
+    * **Bloco CIDR:** `192.168.0.0/24`
+    * **Recurso:** Instância EC2 ou RDS com o banco de dados.
+
+**Objetivo Final:** Permitir que o servidor Zabbix (`VPC-A`) acesse o banco de dados (`VPC-B`) através de seus IPs privados.
+
+---
+
+### **Passo 1: Criar a Solicitação de Peering**
+
+A conexão é sempre iniciada por uma VPC (solicitante) e precisa ser aceita pela outra (receptora).
+
+1.  Acesse o **Console da AWS** e navegue até o serviço **VPC**.
+2.  No menu à esquerda, clique em **Peering Connections**.
+3.  Clique no botão **Create peering connection**.
+4.  Preencha os detalhes da conexão:
+    * **Peering connection name tag:** `Zabbix-to-Database-Peering`
+    * **VPC (Requester):** Selecione a ID da sua `vpc-zabbix`.
+    * **Account:** `My account` (se ambas as VPCs estiverem na mesma conta AWS).
+    * **Region:** Selecione a região correta (geralmente a mesma).
+    * **VPC (Accepter):** Selecione a ID da sua `vpc-database`.
+5.  Clique em **Create peering connection**.
+
+A conexão será criada com o status `Pending Acceptance`.
+
+---
+
+### **Passo 2: Aceitar a Solicitação de Peering**
+
+A VPC receptora precisa aprovar a conexão.
+
+1.  Na tela de **Peering Connections**, selecione a conexão pendente que você acabou de criar.
+2.  Clique no menu **Actions** e escolha **Accept request**.
+3.  Confirme a ação na janela que aparecer.
+
+O status da conexão mudará para `Active`. A ponte entre as VPCs está criada, mas o tráfego ainda não sabe o caminho.
+
+---
+
+### **Passo 3: Atualizar as Tabelas de Rota**
+
+Agora, precisamos informar a cada VPC como alcançar os endereços da outra.
+
+#### 3.1. Rota para a VPC-A (Zabbix)
+
+1.  No menu do console VPC, clique em **Route Tables**.
+2.  Selecione a tabela de rotas associada à sub-rede da sua instância Zabbix.
+3.  Vá até a aba **Routes** e clique em **Edit routes**.
+4.  Clique em **Add route** e preencha:
+    * **Destination:** `192.168.0.0/24` (O CIDR da VPC-B).
+    * **Target:** Selecione `Peering Connection` e escolha a conexão `Zabbix-to-Database-Peering` criada anteriormente.
+5.  Clique em **Save changes**.
+
+#### 3.2. Rota para a VPC-B (Banco de Dados)
+
+1.  Volte para **Route Tables** e selecione a tabela de rotas associada à sub-rede do seu banco de dados.
+2.  Vá até a aba **Routes** e clique em **Edit routes**.
+3.  Clique em **Add route** e preencha:
+    * **Destination:** `10.10.0.0/16` (O CIDR da VPC-A).
+    * **Target:** Selecione `Peering Connection` e escolha a mesma conexão.
+5.  Clique em **Save changes**.
+
+---
+
+### **Passo 4: Configurar os Security Groups (Firewall)**
+
+Este é o passo final e **crucial para a segurança**. As rotas permitem o caminho, mas os Security Groups precisam autorizar a entrada.
+
+1.  Navegue até **Security Groups** (no menu da VPC ou EC2).
+2.  Selecione o Security Group que está anexado à sua instância de banco de dados na **VPC-B**.
+3.  Vá até a aba **Inbound rules** e clique em **Edit inbound rules**.
+4.  Clique em **Add rule** e configure a permissão:
+    * **Type:** `MYSQL/Aurora` (que já preenche a porta `3306`) ou `Custom TCP`.
+    * **Protocol:** `TCP`.
+    * **Port Range:** `3306`.
+    * **Source:** Selecione `Custom` e insira o bloco CIDR da **VPC-A (`10.10.0.0/16`)**.
+        * *Dica de Segurança:* Para uma regra ainda mais restrita, você pode usar o IP privado específico da instância Zabbix (ex: `10.10.5.100/32`).
+    * **Description:** `Permite acesso MySQL da VPC do Zabbix via Peering`.
+5.  Clique em **Save rules**.
+
+**Observação:** Por padrão, as regras de saída (Outbound Rules) já permitem todo o tráfego, então geralmente não é necessário alterar o Security Group do Zabbix, a menos que você tenha uma política de segurança restritiva.
+
+---
+
+### **Verificação**
+
+Após seguir todos os passos, você pode fazer um teste de conectividade. Acesse sua instância Zabbix via SSH e tente se conectar ao banco de dados usando o IP privado dele.
+
+```bash
+# Exemplo usando mysql-client
+mysql -h IP_PRIVADO_DO_DB -u SEU_USUARIO -p
+
+# Exemplo usando um teste de conexão de rede
+nc -zv IP_PRIVADO_DO_DB 3306
+```
+
+Se a conexão for bem-sucedida, o VPC Peering está configurado corretamente!

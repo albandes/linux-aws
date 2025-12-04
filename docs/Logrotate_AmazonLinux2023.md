@@ -104,3 +104,6 @@ sudo logrotate -f /etc/logrotate.conf
 - Por padrão, roda **1x por dia** em horário variável.  
 - Você pode sobrescrever o horário com `systemctl edit logrotate.timer`.  
 - Para rodar imediatamente, use `systemctl start logrotate.service`.  
+
+
+
